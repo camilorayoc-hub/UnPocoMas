@@ -1,0 +1,89 @@
+@page "/"
+@namespace UnPocoMas.UI.Pages
+@using UnPocoMas.UI.Services
+@inject DailyGameService GameService
+@inject NavigationManager Navigation
+
+@if (_loading)
+{
+    <section class="upm-stack" aria-live="polite">
+        <p class="upm-brand"><span class="upm-brand-mark" aria-hidden="true">✦</span> Un Poco Más</p>
+        <p class="upm-subtitle">Cargando reto de hoy…</p>
+    </section>
+}
+else
+{
+    <div class="upm-stack">
+        <header>
+            <p class="upm-brand"><span class="upm-brand-mark" aria-hidden="true">✦</span> Un Poco Más</p>
+            <p class="upm-eyebrow upm-eyebrow--spaced">Juego diario</p>
+            <h1 class="upm-title">Un poco más.</h1>
+            <p class="upm-subtitle">Cinco rondas. Un solo intento. ¿Hasta dónde llegas?</p>
+        </header>
+
+        <section class="upm-card upm-card--padded upm-stack" aria-labelledby="daily-challenge-title">
+            <div class="upm-round-heading">
+                <span class="upm-badge">Reto #@GameService.CurrentChallenge.ChallengeNumber</span>
+                <span class="upm-muted">🔥 @GameService.Statistics.CurrentStreak días</span>
+            </div>
+
+            @if (GameService.State.IsCompleted)
+            {
+                <div>
+                    <p class="upm-eyebrow">Completado</p>
+                    <h2 id="daily-challenge-title">Reto de hoy completado</h2>
+                    <p class="upm-subtitle">Tu resultado ya está guardado. Vuelve mañana para otro intento.</p>
+                </div>
+                <button class="upm-button upm-button--primary upm-button--full" @onclick="ViewSummary" aria-label="Ver resumen del reto de hoy">VER RESUMEN</button>
+            }
+            else if (GameService.State.Results.Count > 0)
+            {
+                <div>
+                    <p class="upm-eyebrow">En curso</p>
+                    <h2 id="daily-challenge-title">Reto diario</h2>
+                    <p class="upm-subtitle">Ronda @Math.Min(GameService.State.CurrentRoundIndex + 1, 5) de 5</p>
+                </div>
+                <button class="upm-button upm-button--primary upm-button--full" @onclick="Play" aria-label="Continuar el reto diario">CONTINUAR</button>
+            }
+            else
+            {
+                <div>
+                    <p class="upm-eyebrow">Disponible ahora</p>
+                    <h2 id="daily-challenge-title">Reto diario</h2>
+                    <p class="upm-subtitle">Cinco rondas. Un solo intento.</p>
+                </div>
+                <button class="upm-button upm-button--primary upm-button--full" @onclick="Play" aria-label="Jugar ahora el reto diario">JUGAR AHORA</button>
+            }
+        </section>
+
+        <section class="upm-card upm-card--elevated upm-card--padded" aria-label="Resumen de racha">
+            <span class="upm-metric-label">Tu racha actual</span>
+            <strong class="upm-metric-value">@GameService.Statistics.CurrentStreak días</strong>
+        </section>
+    </div>
+}
+
+@code {
+    private bool _loading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await GameService.InitializeAsync();
+        _loading = false;
+    }
+
+    private void Play()
+    {
+        if (GameService.State.IsCompleted)
+        {
+            return;
+        }
+
+        Navigation.NavigateTo("/round");
+    }
+
+    private void ViewSummary()
+    {
+        Navigation.NavigateTo("/summary");
+    }
+}

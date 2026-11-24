@@ -1,0 +1,48 @@
+@page "/statistics"
+@namespace UnPocoMas.UI.Pages
+@using UnPocoMas.UI.Services
+@inject DailyGameService GameService
+
+@if (_loading)
+{
+    <p aria-live="polite">Cargando estadísticas…</p>
+}
+else
+{
+    <div class="upm-stack">
+        <header>
+            <p class="upm-brand"><span class="upm-brand-mark" aria-hidden="true">✦</span> Un Poco Más</p>
+            <p class="upm-eyebrow upm-eyebrow--spaced">Tu progreso</p>
+            <h1 class="upm-title">Estadísticas</h1>
+        </header>
+
+        <section class="upm-stat-grid" aria-label="Estadísticas del juego">
+            <article class="upm-card upm-stat-card">
+                <span class="upm-metric-label">Días jugados</span>
+                <strong class="upm-metric-value">@GameService.Statistics.DaysPlayed</strong>
+            </article>
+            <article class="upm-card upm-stat-card">
+                <span class="upm-metric-label">Racha actual</span>
+                <strong class="upm-metric-value">@GameService.Statistics.CurrentStreak</strong>
+            </article>
+            <article class="upm-card upm-stat-card">
+                <span class="upm-metric-label">Mejor puntuación</span>
+                <strong class="upm-metric-value">@GameService.Statistics.BestScore</strong>
+            </article>
+            <article class="upm-card upm-stat-card">
+                <span class="upm-metric-label">Eficiencia media</span>
+                <strong class="upm-metric-value">@GameService.Statistics.AverageEfficiency.ToString("0") %</strong>
+            </article>
+        </section>
+    </div>
+}
+
+@code {
+    private bool _loading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await GameService.InitializeAsync();
+        _loading = false;
+    }
+}

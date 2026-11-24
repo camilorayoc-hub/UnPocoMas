@@ -1,0 +1,194 @@
+@page "/round"
+@namespace UnPocoMas.UI.Pages
+@implements IDisposable
+@using System.Globalization
+@using UnPocoMas.Core.Models
+@using UnPocoMas.UI.Services
+@inject DailyGameService GameService
+@inject RoundRuntimeService Runtime
+@inject IAppLifecycleService AppLifecycle
+@inject NavigationManager Navigation
+
+@if (_result is not null)
+{
+    <section class="upm-result @ResultClass" aria-live="polite" aria-label="Resultado de la ronda">
+        <div>
+            <div class="upm-result-symbol" aria-hidden="true">@_result.ShareSymbol</div>
+            <p class="upm-eyebrow">Ronda @_result.RoundNumber completada</p>
+            <h1>@ResultTitle</h1>
+            <p class="upm-metric-value">@_result.Points puntos</p>
+            <p>Habría caído en @_result.CrashMultiplier.ToString("0.00", CultureInfo.InvariantCulture)×</p>
+            <p class="upm-muted">Siguiente ronda en breve</p>
+        </div>
+    </section>
+}
+else
+{
+    <div class="upm-round" aria-label="Ronda de juego">
+        <header class="upm-round-top">
+            <div class="upm-round-heading">
+                <span class="upm-eyebrow">Ronda @(GameService.State.CurrentRoundIndex + 1) de 5</span>
+                <span class="upm-points" aria-label="Puntos acumulados">@GameService.State.Results.Sum(result => result.Points) pts</span>
+            </div>
+            <div class="upm-progress" role="progressbar" aria-label="Progreso del reto" aria-valuemin="0" aria-valuemax="5" aria-valuenow="@GameService.State.CurrentRoundIndex">
+                @for (int index = 0; index < 5; index++)
+                {
+                    <span class="@(index < GameService.State.CurrentRoundIndex ? "is-done" : index == GameService.State.CurrentRoundIndex ? "is-current" : string.Empty)" aria-hidden="true"></span>
+                }
+            </div>
+        </header>
+
+        <section class="upm-round-center" aria-live="polite">
+            <div class="upm-round-target" aria-label="Objetivo de retirada">
+                <span>FRENA ANTES DE</span>
+                <strong>@((Runtime.CurrentRound.CrashMultiplier * .9).ToString("0.00", CultureInfo.InvariantCulture))×</strong>
+            </div>
+            <div class="upm-track" aria-hidden="true">
+                <span class="upm-track-label">IMPACTO EN @Runtime.CurrentRound.CrashMultiplier.ToString("0.00", CultureInfo.InvariantCulture)×</span>
+                <span class="upm-track-line"></span>
+                <span class="upm-runner" style="left: @RunnerPosition.ToString("0.####", CultureInfo.InvariantCulture)%" role="img" aria-label="Corredor avanzando hacia el impacto">
+                    <span class="upm-runner-head"></span>
+                    <span class="upm-runner-body"></span>
+                    <span class="upm-runner-arm upm-runner-arm--front"></span>
+                    <span class="upm-runner-arm upm-runner-arm--back"></span>
+                    <span class="upm-runner-leg upm-runner-leg--front"></span>
+                    <span class="upm-runner-leg upm-runner-leg--back"></span>
+                </span>
+                <span class="upm-obstacle">▰</span>
+            </div>
+            @if (Runtime.IsCountdown)
+            {
+                <div class="upm-countdown" aria-label="Cuenta atrás">@CountdownText</div>
+            }
+            else
+            {
+                <div class="upm-multiplier" aria-label="Multiplicador actual">@Runtime.CurrentMultiplier.ToString("0.00", CultureInfo.InvariantCulture)×</div>
+            }
+        </section>
+
+        <section class="upm-round-action">
+            <button class="upm-retire" @onclick="RetireAsync" disabled="@(!Runtime.IsRunning)" aria-label="Retirar ahora y terminar la ronda">RETIRAR</button>
+        </section>
+    </div>
+}
+
+@code {
+    private RoundResult? _result;
+    private bool _restartScheduled;
+    private bool _disposed;
+
+    private string CountdownText => Runtime.CountdownValue == 0 ? "¡YA!" : Runtime.CountdownValue.ToString();
+
+    private double RunProgress => Runtime.IsCountdown || Runtime.CurrentRound is null
+        ? 0.0
+        : Math.Clamp(
+            Runtime.ElapsedSeconds / Runtime.CurrentRound.CrashTimeSeconds,
+            0.0,
+            1.0);
+
+    private double RunnerPosition => 8.0 + RunProgress * 84.0;
+
+    private string ResultTitle => _result is null
+        ? string.Empty
+        : _result.Success
+            ? (_result.RetireMultiplier >= _result.CrashMultiplier * .9 ? "¡Al límite!" : "Retirada segura")
+            : "Te pasaste";
+
+    private string ResultClass => _result is null
+        ? string.Empty
+        : _result.Success
+            ? (_result.RetireMultiplier >= _result.CrashMultiplier * .9 ? "upm-result--warning" : "upm-result--success")
+            : "upm-result--danger";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await GameService.InitializeAsync();
+        Runtime.StateChanged += OnRuntimeStateChanged;
+        Runtime.RoundCompleted += OnRoundCompleted;
+        AppLifecycle.Backgrounded += OnAppBackgrounded;
+        AppLifecycle.Resumed += OnAppResumed;
+
+        if (GameService.State.IsCompleted)
+        {
+            Navigation.NavigateTo("/summary");
+            return;
+        }
+
+        await Runtime.StartAsync(GameService.CurrentRound);
+    }
+
+    private Task RetireAsync() => Runtime.RetireAsync();
+
+    private void OnRuntimeStateChanged() => _ = InvokeAsync(StateHasChanged);
+
+    private void OnRoundCompleted(RoundResult result) => _ = InvokeAsync(() => ShowResultAsync(result));
+
+    private void OnAppBackgrounded() => Runtime.HandleBackgrounded();
+
+    private void OnAppResumed()
+    {
+        if (_disposed || _result is not null || Runtime.IsFinished || _restartScheduled || !Runtime.WasCountdownCancelledByBackground())
+        {
+            return;
+        }
+
+        _restartScheduled = true;
+        _ = InvokeAsync(RestartCancelledCountdownAsync);
+    }
+
+    private async Task RestartCancelledCountdownAsync()
+    {
+        if (_disposed || _result is not null || Runtime.IsFinished || !Runtime.WasCountdownCancelledByBackground())
+        {
+            _restartScheduled = false;
+            return;
+        }
+
+        try
+        {
+            await Runtime.StartAsync(Runtime.CurrentRound);
+        }
+        finally
+        {
+            _restartScheduled = false;
+        }
+    }
+
+    private async Task ShowResultAsync(RoundResult result)
+    {
+        if (_disposed || _result is not null)
+        {
+            return;
+        }
+
+        _result = result;
+        await GameService.RecordResultAsync(result);
+        await InvokeAsync(StateHasChanged);
+        await Task.Delay(TimeSpan.FromSeconds(1.5));
+
+        if (_disposed)
+        {
+            return;
+        }
+
+        if (GameService.State.IsCompleted)
+        {
+            Navigation.NavigateTo("/summary");
+            return;
+        }
+
+        _result = null;
+        await Runtime.StartAsync(GameService.CurrentRound);
+        await InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        _disposed = true;
+        AppLifecycle.Backgrounded -= OnAppBackgrounded;
+        AppLifecycle.Resumed -= OnAppResumed;
+        Runtime.StateChanged -= OnRuntimeStateChanged;
+        Runtime.RoundCompleted -= OnRoundCompleted;
+        Runtime.Dispose();
+    }
+}

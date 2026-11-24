@@ -1,0 +1,21 @@
+﻿@inherits LayoutComponentBase
+@inject NavigationManager Navigation
+
+<div class="upm-shell">
+    <main class="@(IsRoundPage ? "upm-frame upm-frame--round" : "upm-frame")">
+        @Body
+    </main>
+
+    @if (!IsRoundPage)
+    {
+        <NavMenu />
+    }
+</div>
+
+@code {
+    private bool IsRoundPage =>
+        Navigation.ToBaseRelativePath(Navigation.Uri)
+            .Split('?', '#')[0]
+            .Trim('/')
+            .Equals("round", StringComparison.OrdinalIgnoreCase);
+}

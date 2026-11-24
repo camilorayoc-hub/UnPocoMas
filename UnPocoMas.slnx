@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="UnPocoMas.Core.Tests/UnPocoMas.Core.Tests.csproj" />
+  <Project Path="UnPocoMas.Core/UnPocoMas.Core.csproj" />
+  <Project Path="UnPocoMas.Maui/UnPocoMas.Maui.csproj" />
+  <Project Path="UnPocoMas.UI/UnPocoMas.UI.csproj" />
+</Solution>

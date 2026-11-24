@@ -1,0 +1,221 @@
+@page "/summary"
+@namespace UnPocoMas.UI.Pages
+@implements IDisposable
+@using System.Globalization
+@using UnPocoMas.Core.Models
+@using UnPocoMas.Core.Services
+@using UnPocoMas.UI.Interfaces
+@using UnPocoMas.UI.Services
+@inject DailyGameService GameService
+@inject IShareService ShareService
+@inject ShareTextBuilder ShareTextBuilder
+@inject NavigationManager Navigation
+
+@if (_dailyResult is null)
+{
+    <section class="upm-stack" aria-live="polite">
+        <p class="upm-brand"><span class="upm-brand-mark" aria-hidden="true">✦</span> Un Poco Más</p>
+        <div class="upm-card upm-card--padded upm-stack">
+            <h1 class="upm-title">Aún no</h1>
+            <p class="upm-subtitle">Todavía no has completado el reto de hoy.</p>
+            <button class="upm-button upm-button--primary upm-button--full" @onclick="GoHome">VOLVER AL INICIO</button>
+        </div>
+    </section>
+}
+else
+{
+    <div class="upm-stack">
+        <header>
+            <p class="upm-brand"><span class="upm-brand-mark" aria-hidden="true">✦</span> Un Poco Más</p>
+            <p class="upm-eyebrow upm-eyebrow--spaced">Resultado diario</p>
+            <h1 class="upm-title">Reto #@_dailyResult.ChallengeNumber completado</h1>
+        </header>
+
+        <section class="upm-card upm-card--elevated upm-card--padded" aria-label="Resultado total">
+            <span class="upm-metric-label">Puntuación</span>
+            <strong class="upm-score">@_scoreMultiplierText</strong>
+            <p class="upm-subtitle">Eficiencia @_efficiencyText</p>
+        </section>
+
+        <section aria-labelledby="rounds-title">
+            <h2 id="rounds-title" class="upm-eyebrow">Cinco rondas</h2>
+            <ol class="upm-list">
+                @foreach (RoundResult round in _dailyResult.Rounds)
+                {
+                    <li class="upm-card upm-round-item">
+                        <span>
+                            <strong>Ronda @round.RoundNumber</strong>
+                            <span class="upm-muted"> · @RoundStatus(round)</span>
+                        </span>
+                        <span>
+                            <span aria-label="@RoundStatus(round)">@round.ShareSymbol</span>
+                            <strong>@round.Points pts</strong>
+                        </span>
+                    </li>
+                }
+            </ol>
+        </section>
+
+        <section class="upm-card upm-card--padded" aria-label="Próximo reto">
+            <span class="upm-metric-label">Próximo reto</span>
+            <strong class="upm-metric-value">Próximo reto en @_nextChallengeText</strong>
+        </section>
+
+        <div class="upm-stack">
+            <button class="upm-button upm-button--primary upm-button--full" @onclick="ShareAsync" disabled="@_isSharing" aria-label="Compartir resultado">
+                @(_isSharing ? "COMPARTIENDO…" : "COMPARTIR RESULTADO")
+            </button>
+            <button class="upm-button upm-button--secondary upm-button--full" @onclick="GoHome">VOLVER AL INICIO</button>
+        </div>
+
+        @if (_shareError is not null)
+        {
+            <p role="alert" class="upm-danger">@_shareError</p>
+        }
+    </div>
+}
+
+@code {
+    private DailyResult? _dailyResult;
+    private string _shareText = string.Empty;
+    private string _scoreMultiplierText = string.Empty;
+    private string _efficiencyText = string.Empty;
+    private string _nextChallengeText = "00:00:00";
+    private string? _shareError;
+    private CancellationTokenSource? _countdownCancellation;
+    private Task? _countdownTask;
+    private bool _isSharing;
+    private bool _disposed;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await GameService.InitializeAsync();
+
+        if (!GameService.State.IsCompleted)
+        {
+            return;
+        }
+
+        try
+        {
+            _dailyResult = GameService.CreateDailyResult();
+            _shareText = ShareTextBuilder.Build(_dailyResult);
+            _scoreMultiplierText = (
+                _dailyResult.TotalPoints / 100.0)
+                .ToString("0.0x", CultureInfo.InvariantCulture);
+            _efficiencyText = _dailyResult.EfficiencyPercent
+                .ToString("0", CultureInfo.InvariantCulture) + " %";
+
+            _countdownCancellation = new CancellationTokenSource();
+            _countdownTask = RunCountdownAsync(
+                _countdownCancellation.Token);
+        }
+        catch (Exception)
+        {
+            _dailyResult = null;
+        }
+    }
+
+    private static string RoundStatus(RoundResult round)
+    {
+        if (!round.Success)
+        {
+            return "Te pasaste";
+        }
+
+        return round.RetireMultiplier >= round.CrashMultiplier * .9
+            ? "¡Al límite!"
+            : "Retirada segura";
+    }
+
+    private async Task ShareAsync()
+    {
+        if (_isSharing || _dailyResult is null)
+        {
+            return;
+        }
+
+        _isSharing = true;
+        _shareError = null;
+
+        try
+        {
+            await ShareService.ShareTextAsync(_shareText);
+        }
+        catch (Exception)
+        {
+            _shareError = "No se pudo compartir el resultado.";
+        }
+        finally
+        {
+            _isSharing = false;
+
+            if (!_disposed)
+            {
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+    }
+
+    private async Task RunCountdownAsync(CancellationToken cancellationToken)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
+
+        try
+        {
+            UpdateCountdown();
+
+            while (await timer.WaitForNextTickAsync(cancellationToken))
+            {
+                if (_disposed)
+                {
+                    return;
+                }
+
+                UpdateCountdown();
+                await InvokeAsync(() =>
+                {
+                    if (!_disposed)
+                    {
+                        StateHasChanged();
+                    }
+                });
+            }
+        }
+        catch (OperationCanceledException) when (
+            cancellationToken.IsCancellationRequested)
+        {
+        }
+    }
+
+    private void UpdateCountdown()
+    {
+        DateTimeOffset now = DateTimeOffset.UtcNow;
+        DateTimeOffset nextMinute = new(
+            now.UtcDateTime.AddMinutes(1).AddSeconds(-now.Second).AddMilliseconds(-now.Millisecond),
+            TimeSpan.Zero);
+        TimeSpan remaining = nextMinute - now;
+
+        if (remaining < TimeSpan.Zero)
+        {
+            remaining = TimeSpan.Zero;
+        }
+
+        _nextChallengeText = remaining.ToString(
+            @"hh\:mm\:ss",
+            CultureInfo.InvariantCulture);
+    }
+
+    private void GoHome()
+    {
+        Navigation.NavigateTo("/");
+    }
+
+    public void Dispose()
+    {
+        _disposed = true;
+        _countdownCancellation?.Cancel();
+        _countdownCancellation?.Dispose();
+        _countdownCancellation = null;
+    }
+}
